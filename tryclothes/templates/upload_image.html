@@ -302,6 +302,16 @@
 </head>
 <body>
     <div class="container">
+    {% if request.user.is_authenticated %}
+    <a style="text-decoration: none; color: black;"
+        href="{% url 'logout' %}">&nbsp;<b>Logout</b> </a>
+    <a style="text-decoration: none; color: black;" href="{% url 'profile' %}">&nbsp;<b>Profile</b> </a>
+    {% else %}
+
+    <a style="text-decoration: none; color: black;" href="{% url 'sign-up' %}">&nbsp;<b>Sign Up</b> </a>
+    <a style="text-decoration: none; color: black;" href="{% url 'login' %}">&nbsp;<b>Login</b> </a>
+    {% endif %}
+                
         <h1>🎽 3D Virtual Try-On</h1>
         
         <div class="form-section">
