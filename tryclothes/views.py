@@ -29,6 +29,7 @@ from tensorflow.keras.utils import get_file
 import tensorflow_hub as hub
 import uuid
 
+# utils.py
 import cv2
 import numpy as np
 import requests
@@ -37,6 +38,7 @@ import io
 from rembg import remove
 import json
 from sklearn.cluster import KMeans
+import mediapipe as mp
 
 
 
@@ -479,9 +481,7 @@ def extract_with_adaptive_detection(opencv_image):
         return None
 
 
-# utils.py
-import cv2
-import mediapipe as mp
+
 
 def get_body_measurements(image_path):
     mp_pose = mp.solutions.pose
@@ -559,7 +559,7 @@ def login_view(request):
 def logout_user(request):
     logout(request)
     messages.success(request, 'You have been logged out successfully.')
-    return redirect('home')
+    return redirect('login')
 
 def profile(request):
     profile = request.user

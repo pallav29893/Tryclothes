@@ -1,96 +1,204 @@
 {% load static %}
 
-<style>
-    .gradient-custom-3 {
-/* fallback for old browsers */
-background: #84fab0;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login & Sign Up</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
 
-/* Chrome 10-25, Safari 5.1-6 */
-background: -webkit-linear-gradient(to right, rgba(132, 250, 176, 0.5), rgba(143, 211, 244, 0.5));
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
 
-/* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
-background: linear-gradient(to right, rgba(132, 250, 176, 0.5), rgba(143, 211, 244, 0.5))
-}
-.gradient-custom-4 {
-/* fallback for old browsers */
-background: #84fab0;
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
 
-/* Chrome 10-25, Safari 5.1-6 */
-background: -webkit-linear-gradient(to right, rgba(132, 250, 176, 1), rgba(143, 211, 244, 1));
+        .form-section {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 25px;
+            border: 2px solid #e9ecef;
+        }
 
-/* W3C, IE 10+/ Edge, Firefox 16+, Chrome 26+, Opera 12+, Safari 7+ */
-background: linear-gradient(to right, rgba(132, 250, 176, 1), rgba(143, 211, 244, 1))
-}
-</style>
+        .form-group {
+            margin-bottom: 20px;
+        }
 
-<section class="vh-100 bg-image"
-  style="background-image: url('https://mdbcdn.b-cdn.net/img/Photos/new-templates/search-box/img4.webp');">
-  <div class="mask d-flex align-items-center h-100 gradient-custom-3">
-    <div class="container h-100">
-      <div class="row d-flex justify-content-center align-items-center h-100">
-        <div class="col-12 col-md-9 col-lg-7 col-xl-6">
-          <div class="card" style="border-radius: 15px;">
-            <div class="card-body p-5">
-              <h2 class="text-uppercase text-center mb-5">Login</h2>
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
 
-              {% if error_message %}
-                  <P style="color: red;">{{error_message}}</P>
-              {% endif %}
+        input[type="text"], input[type="email"], input[type="password"], input[type="url"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
+        }
 
-              <form method="POST" enctype="multipart/form-data">
+        input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus, input[type="url"]:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .submit-btn {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        .submit-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+        }
+
+        .submit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.2);
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+                padding: 20px;
+            }
+
+            input[type="text"], input[type="email"], input[type="password"], input[type="url"] {
+                width: 100%;
+                max-width: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🎽 3D Virtual Try-On</h1>
+
+        <div class="form-section">
+
+             <form method="POST" enctype="multipart/form-data">
                 {% csrf_token %}
-
-                <div data-mdb-input-init class="form-outline mb-4">
-                    <input type="text" id="name" class="form-control form-control-lg" name="name" placeholder="Enter Your Name"/>
-                    <!-- <label class="form-label" for="form3Example1cg">Your Name</label> -->
+                <div class="form-group">
+                    <label for="username">Username:</label>
+                    <input type="text" id="name" name="name" placeholder="Enter your username" required>
                 </div>
-            
-                <!-- <div data-mdb-input-init class="form-outline mb-4">
-                    <input type="email" id="email" class="form-control form-control-lg" name="email" />
-                    <label class="form-label" for="form3Example3cg">Your Email</label>
-                </div> -->
-            
-                <div style="position: relative;">
-                  <input type="password" id="password" class="form-control form-control-lg" name="password" placeholder="Enter Password" />
-                  <i id="togglePassword" style="position: absolute; top: 15px;right: 15px;cursor: pointer;" class="fa-regular fa-eye"></i>
-              </div>
-              <!-- <label class="form-label" for="form3Example4cg">Password</label> -->
-            
-                <div class="form-check d-flex justify-content-center mb-5">
-                    <input class="form-check-input me-2" type="checkbox" value="" id="form2Example3cg" name="agree" />
-                    <label class="form-check-label" for="form2Example3g">
-                        I agree to all statements in <a href="#!" class="text-body"><u>Terms of Service</u></a>
-                    </label>
+                <div class="form-group">
+                    <label for="password">Password:</label>
+                    <input type="password" id="password" name="password" placeholder="Enter your password" required>
                 </div>
-                <div class="d-flex justify-content-center">
-                    <button type="submit" class="btn btn-success btn-block btn-lg gradient-custom-4 text-body">Log In </button>
-                </div>
-
+                
+                <button type="submit" class="submit-btn" id="submitBtn">Login
+                </button>
             </form>
+            <p style="text-align: center;">Don't have an account?<a href="{% url 'signup' %}" style="text-decoration: none;"> Sign Up</a></p>
 
-            </div>
-          </div>
+
+            <div id="status" class="status" style="display: none;"></div>
         </div>
-      </div>
+
+        <!-- Optional: Add the rest of the 3D virtual try-on content here if applicable -->
+
     </div>
-  </div>
-</section>
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
-
-<script>
-  document
-    .getElementById("togglePassword")
-    .addEventListener("click", function () {
-      const passwordField = document.getElementById("password");
-      const type =
-        passwordField.getAttribute("type") === "password"
-          ? "text"
-          : "password";
-      passwordField.setAttribute("type", type);
-      this.className =
-        type === "password"
-          ? "fa-regular fa-eye"
-          : "fa-regular fa-eye-slash";
-    });
-</script>
+</body>
+</html>
