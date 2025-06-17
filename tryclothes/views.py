@@ -5,135 +5,164 @@ import os
 from django.conf import settings
 from django.contrib.auth import authenticate, login ,logout
 from django.contrib import messages
-import base64
 from django.views.decorators.csrf import csrf_exempt
-
-
-
-
-
-
-# Create your views here.
 from django.http import JsonResponse
-from bs4 import BeautifulSoup
 import requests
-from urllib.parse import urlparse, parse_qs
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 import time
-import tensorflow as tf
-from tensorflow.keras.utils import get_file
 import tensorflow_hub as hub
 import uuid
-
-# utils.py
 import cv2
 import numpy as np
-import requests
 from PIL import Image
-import io
-from rembg import remove
 import json
-from sklearn.cluster import KMeans
 import mediapipe as mp
 
-
-
-# Model URL
-# model_url = 'http://download.tensorflow.org/models/object_detection/ssd_mobilenet_v2_coco_2018_03_29.tar.gz'
-
-# # Download and untar the model to a directory
-# model_dir = get_file('ssd_mobilenet_v2_coco', model_url, untar=True)
-
-# # Print the directory to confirm
-# print(f"Model directory: {model_dir}")
-
-# # Set the path to the saved model directory inside the downloaded folder
-# model_path = os.path.join(model_dir, 'saved_model')
-
-# # Check if the path exists
-# if not os.path.exists(model_path):
-#     print(f"Model path does not exist: {model_path}")
-# else:
-#     print(f"Model path exists: {model_path}")
-
-# # Load the model
-# model = tf.saved_model.load(model_path)
+import torch
+import open3d as o3d
+from torchvision.transforms import Compose, Resize, ToTensor, Normalize
+import shutil
 
 model = hub.load("https://tfhub.dev/tensorflow/ssd_mobilenet_v2/2")
 print("Model loaded successfully!")
 
+def load_midas_model():
+    model_type = "DPT_Large"
+    midas = torch.hub.load("intel-isl/MiDaS", model_type, trust_repo=True)
+    midas.eval()
+
+    transform = Compose([
+        Resize(384),  # Input size for DPT_Large
+        ToTensor(),
+        Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
+    ])
+    return midas, transform
+
+def estimate_depth(image_path, midas, transform):
+    img = Image.open(image_path).convert("RGB")
+    input_tensor = transform(img).unsqueeze(0)
+
+    with torch.no_grad():
+        prediction = midas(input_tensor)
+
+    depth_map = prediction.squeeze().cpu().numpy()
+    return depth_map
+
+
+def depth_to_point_cloud(depth_map, image_path, scale=1.0):
+    # Use OpenCV to read image as NumPy array (not PIL!)
+    img = cv2.imread(image_path)
+    if img is None:
+        raise ValueError(f"Failed to read image: {image_path}")
+    
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = img.astype(np.float32) / 255.0
+
+    h, w = depth_map.shape
+    xx, yy = np.meshgrid(np.arange(w), np.arange(h))
+
+    x = (xx - w / 2) * depth_map / scale
+    y = (yy - h / 2) * depth_map / scale
+    z = depth_map
+
+    points = np.stack((x, -y, z), axis=-1).reshape(-1, 3)
+    colors = img.reshape(-1, 3)
+
+    pc = o3d.geometry.PointCloud()
+    pc.points = o3d.utility.Vector3dVector(points)
+    pc.colors = o3d.utility.Vector3dVector(colors)
+
+    return pc
 
 
 
-# def get_clothing_images_amazon(keyword="tshirt"):
-#     headers = {'User-Agent': 'Mozilla/5.0'}
-#     url = f"https://www.amazon.in/s?k={keyword}"
-#     r = requests.get(url, headers=headers)
-#     soup = BeautifulSoup(r.content, "html.parser")
+def reconstruct_mesh_from_images(image_paths):
+    midas, transform = load_midas_model()
+    all_pcs = []
 
-#     images = []
-#     for img_tag in soup.select("img.s-image"):
-#         images.append(img_tag['src'])
-#     return images
+    for img_path in image_paths:
+        print(f"[INFO] Processing image: {img_path}")
+        depth = estimate_depth(img_path, midas, transform)
+        pc = depth_to_point_cloud(depth, img_path)
+        all_pcs.append(pc)
 
-# Scraping function to get clothing product image from Amazon
-def get_clothing_images_amazon(product_url):
-    """Enhanced Amazon scraper with better image detection"""
+    # Combine point clouds
+    combined_pc = all_pcs[0]
+    for pc in all_pcs[1:]:
+        combined_pc += pc
+
+    combined_pc = combined_pc.voxel_down_sample(voxel_size=2.0)
+    combined_pc.estimate_normals()
+
+    # Create mesh using ball pivoting
+    distances = combined_pc.compute_nearest_neighbor_distance()
+    avg_dist = np.mean(distances)
+    radius = 3 * avg_dist
+
+    mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+        combined_pc, o3d.utility.DoubleVector([radius, radius * 2])
+    )
+
+    model_path = f"/tmp/generated_model_{uuid.uuid4().hex}.ply"
+    o3d.io.write_triangle_mesh(model_path, mesh)
+    return {"model_path": model_path, "message": "3D model created"}
+
+
+
+def get_all_clothing_images_amazon(product_url):
+    """Scrape all product images from an Amazon product page."""
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--disable-gpu')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--window-size=1920,1080')
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
-    
+    options.add_argument('--user-agent=Mozilla/5.0 ...')
+
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    
+    image_urls = []
+
     try:
         driver.get(product_url)
-        time.sleep(5)  # Wait for page to load
-        
-        # Try multiple selectors for Amazon product images
-        image_selectors = [
-            '#landingImage',
-            '#imgBlkFront',
-            '.a-dynamic-image',
-            '[data-a-image-name="landingImage"]',
-            '.a-spacing-small img',
-            '#main-image-container img',
-            '.imgTagWrapper img',
-            '[data-old-hires]',
-            '[data-a-dynamic-image]'
-        ]
-        
-        image_url = None
-        for selector in image_selectors:
+        time.sleep(5)
+
+        # Find all thumbnail images in the image block
+        thumbnails = driver.find_elements(By.CSS_SELECTOR, '.imageThumbnail .a-button-thumbnail img')
+
+        for thumb in thumbnails:
             try:
-                image_element = driver.find_element(By.CSS_SELECTOR, selector)
-                # Try different attributes
-                for attr in ['data-old-hires', 'data-a-hires', 'src', 'data-src']:
-                    image_url = image_element.get_attribute(attr)
-                    if image_url and 'http' in image_url:
-                        # Get high resolution version
-                        if '._' in image_url:
-                            image_url = image_url.split('._')[0] + '._AC_SL1500_.jpg'
-                        break
-                if image_url:
-                    break
-            except:
-                continue
-                
-        return image_url
-        
+                thumb_url = thumb.get_attribute('src')
+
+                # Convert thumbnail to high-res
+                if thumb_url and '._' in thumb_url:
+                    high_res = thumb_url.split('._')[0] + '._AC_SL1500_.jpg'
+                else:
+                    high_res = thumb_url
+
+                if high_res and high_res not in image_urls:
+                    image_urls.append(high_res)
+            except Exception as e:
+                print("Thumbnail parse error:", e)
+
+        # Fallback to main image if no thumbnails found
+        if not image_urls:
+            main_image = driver.find_element(By.ID, 'landingImage')
+            main_url = main_image.get_attribute('src')
+            image_urls.append(main_url)
+
+        return image_urls
+
     except Exception as e:
-        print(f"Error scraping Amazon: {e}")
-        return None
+        print(f"Error scraping images: {e}")
+        return []
+
     finally:
         driver.quit()
+
 
 @csrf_exempt
 def scrape_product_image(request):
@@ -164,40 +193,48 @@ def scrape_product_image(request):
         print(f"Processing product URL: {product_link}")
         
         # Scrape the product image
-        image_url = get_clothing_images_amazon(product_link)
-        print(f"Scraped image URL: {image_url}")
-        
-        if not image_url:
-            return JsonResponse({
-                'success': False,
-                'error': 'Could not find product image. Please check the URL and try again.'
-            }, status=400)
-        
+        image_urls = get_all_clothing_images_amazon(product_link)
+        print(f"Found {len(image_urls)} images")
+        print(image_urls,"imageeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+
+        if not image_urls:
+            return JsonResponse({'success': False, 'error': 'No images found'})
+
+        # Process images to 3D
         try:
-            # Extract clothing from the image
-            # Replace this with your actual clothing extraction function
-            result = extract_clothing_from_image(image_url)
-            print(f"Clothing extraction result: {result.get('success', False)}")
-            
-            if result.get('success'):
-                return JsonResponse({
-                    'success': True,
-                    'original_image': image_url,
-                    'extracted_clothing': result['clothing_image'],
-                    'message': result.get('message', 'Clothing extracted successfully')
-                })
-            else:
-                return JsonResponse({
-                    'success': False,
-                    'original_image': image_url,
-                    'error': result.get('error', 'Failed to extract clothing from image')
-                }, status=422)
+            model_result = build_3d_model_from_images(image_urls)
+            print("Model result:", model_result)
+            # Move GLB to a media-accessible path
+
+
+            glb_path = model_result['model_path']
+            filename = os.path.basename(glb_path)
+            public_dir = os.path.join(settings.MEDIA_ROOT, 'models')
+            os.makedirs(public_dir, exist_ok=True)
+
+            public_path = os.path.join(public_dir, filename)
+            shutil.copy(glb_path, public_path)
+
+            # URL to be used in frontend
+            model_url = f"/media/models/{filename}"
+            print(model_url,"modellllllurllllll")
+
+            return JsonResponse({
+                'success': True,
+                'original_image': image_urls[0],
+                'model_path': model_url,  # now a URL
+                'message': model_result['message']
+            })
+        except Exception as e:
+            import traceback
+            traceback.print_exc()  # for better logs
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
                 
         except Exception as e:
             print(f"Image processing error: {str(e)}")
             return JsonResponse({
                 'success': False,
-                'original_image': image_url,
+                'original_image': image_urls,
                 'error': f'Failed to process image: {str(e)}'
             }, status=500)
     
@@ -207,6 +244,60 @@ def scrape_product_image(request):
             'success': False,
             'error': f'Server error: {str(e)}'
         }, status=500)
+    
+# def build_3d_model_from_images(image_urls):
+#     try:
+#         image_paths = []
+#         for url in image_urls:
+#             img_data = requests.get(url).content
+#             path = f'/tmp/{uuid.uuid4()}.jpg'
+#             with open(path, 'wb') as f:
+#                 f.write(img_data)
+#             image_paths.append(path)
+
+#         result = reconstruct_mesh_from_images(image_paths)
+#         return result
+
+#     except Exception as e:
+#         print(f"[ERROR in build_3d_model_from_images] {e}")
+#         raise
+
+import trimesh
+
+
+def build_3d_model_from_images(image_urls):
+    try:
+        image_paths = []
+        for url in image_urls:
+            img_data = requests.get(url).content
+            path = f'/tmp/{uuid.uuid4()}.jpg'
+            with open(path, 'wb') as f:
+                f.write(img_data)
+            image_paths.append(path)
+
+        # Generate the PLY model
+        result = reconstruct_mesh_from_images(image_paths)  # Must return a dict with 'model_path'
+
+        ply_path = result.get("model_path")
+        if not ply_path or not ply_path.endswith(".ply"):
+            raise ValueError("Invalid model path or format")
+
+        # Convert to GLB using trimesh
+        mesh = trimesh.load(ply_path)
+        glb_filename = os.path.basename(ply_path).replace(".ply", ".glb")
+        glb_path = os.path.join("/tmp", glb_filename)
+        mesh.export(glb_path)
+
+        return {
+            "model_path": glb_path,  # This will be the .glb path now
+            "message": "3D model (GLB) created"
+        }
+
+    except Exception as e:
+        print(f"[ERROR in build_3d_model_from_images] {e}")
+        raise
+
+
 # def scrape_product_image(request):
 #     if request.method == 'POST':
 #         product_link = request.POST.get('product_link')
@@ -229,256 +320,6 @@ def scrape_product_image(request):
 
 
 
-
-def extract_clothing_from_image(image_url):
-    """
-    Extract any clothing item from a model image using computer vision techniques
-    Works for: shirts, t-shirts, jeans, pants, dresses, pajamas, jackets, etc.
-    
-    Args:
-        image_url (str): URL of the product image
-        
-    Returns:
-        dict: JSON response with extracted clothing image or error
-    """
-    try:
-        # Download image from URL
-        response = requests.get(image_url, timeout=10)
-        response.raise_for_status()
-        
-        # Convert to PIL Image
-        image = Image.open(io.BytesIO(response.content))
-        
-        # Convert PIL to OpenCV format
-        opencv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        
-        # Method 1: Background removal using rembg (works for all clothing)
-        clothing_image = extract_with_background_removal(image, opencv_image)
-        
-        # Method 2: If background removal fails, try person segmentation
-        if clothing_image is None:
-            clothing_image = extract_with_person_segmentation(opencv_image)
-        
-        # Method 3: If both fail, try adaptive clothing detection
-        if clothing_image is None:
-            clothing_image = extract_with_adaptive_detection(opencv_image)
-        
-        if clothing_image is not None:
-            # Convert result to base64 for JSON response
-            _, buffer = cv2.imencode('.png', clothing_image)
-            img_base64 = base64.b64encode(buffer).decode('utf-8')
-            
-            return {
-                'success': True,
-                'clothing_image': f"data:image/png;base64,{img_base64}",
-                'message': 'Clothing extracted successfully'
-            }
-        else:
-            return {
-                'success': False,
-                'error': 'Could not extract clothing from image',
-                'original_image': image_url
-            }
-            
-    except Exception as e:
-        return {
-            'success': False,
-            'error': f'Error processing image: {str(e)}',
-            'original_image': image_url
-        }
-    
-
-def extract_with_background_removal(pil_image, opencv_image):
-    """
-    Method 1: Use rembg to remove background and isolate any clothing item
-    """
-    try:
-        # Remove background using rembg
-        no_bg_image = remove(pil_image)
-        
-        # Convert back to OpenCV format
-        no_bg_cv = cv2.cvtColor(np.array(no_bg_image), cv2.COLOR_RGBA2BGR)
-        
-        # Create mask for non-transparent areas
-        alpha = np.array(no_bg_image)[:, :, 3]
-        mask = alpha > 0
-        
-        # Apply morphological operations to clean up the mask
-        kernel = np.ones((3, 3), np.uint8)
-        mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        
-        # Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Get the largest contour (person with clothing)
-            largest_contour = max(contours, key=cv2.contourArea)
-            
-            # Create bounding box around the person
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # Add padding to ensure we don't cut off clothing
-            padding = 10
-            x = max(0, x - padding)
-            y = max(0, y - padding)
-            w = min(opencv_image.shape[1] - x, w + 2*padding)
-            h = min(opencv_image.shape[0] - y, h + 2*padding)
-            
-            # Apply the mask to the original image
-            result = opencv_image.copy()
-            result[mask == 0] = [255, 255, 255]  # White background
-            
-            # Crop to the clothing region
-            if w > 50 and h > 50:  # Ensure minimum size
-                cropped_clothing = result[y:y+h, x:x+w]
-                return cropped_clothing
-                
-    except Exception as e:
-        print(f"Background removal method failed: {e}")
-        return None
-
-def extract_with_person_segmentation(opencv_image):
-    """
-    Method 2: Use advanced person segmentation to isolate clothing
-    """
-    try:
-        height, width = opencv_image.shape[:2]
-        
-        # Convert to different color spaces for better segmentation
-        hsv = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2HSV)
-        lab = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2LAB)
-        
-        # Create a mask to focus on the center region (where person usually is)
-        center_mask = np.zeros((height, width), dtype=np.uint8)
-        center_x, center_y = width // 2, height // 2
-        
-        # Create elliptical region around center
-        cv2.ellipse(center_mask, (center_x, center_y), 
-                   (width//3, height//2), 0, 0, 360, 255, -1)
-        
-        # Use GrabCut algorithm for foreground extraction
-        mask = np.zeros((height, width), np.uint8)
-        bgd_model = np.zeros((1, 65), np.float64)
-        fgd_model = np.zeros((1, 65), np.float64)
-        
-        # Define rectangle around the person (center region)
-        rect = (width//4, height//8, width//2, 3*height//4)
-        
-        # Apply GrabCut
-        cv2.grabCut(opencv_image, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
-        
-        # Create final mask
-        mask2 = np.where((mask == 2) | (mask == 0), 0, 1).astype('uint8')
-        
-        # Apply morphological operations
-        kernel = np.ones((5, 5), np.uint8)
-        mask2 = cv2.morphologyEx(mask2, cv2.MORPH_CLOSE, kernel)
-        mask2 = cv2.morphologyEx(mask2, cv2.MORPH_OPEN, kernel)
-        
-        # Find contours and get the largest one
-        contours, _ = cv2.findContours(mask2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # Add padding
-            padding = 15
-            x = max(0, x - padding)
-            y = max(0, y - padding)
-            w = min(width - x, w + 2*padding)
-            h = min(height - y, h + 2*padding)
-            
-            # Apply mask to original image
-            result = opencv_image.copy()
-            result[mask2 == 0] = [255, 255, 255]
-            
-            if w > 50 and h > 50:
-                cropped_clothing = result[y:y+h, x:x+w]
-                return cropped_clothing
-                
-    except Exception as e:
-        print(f"Person segmentation method failed: {e}")
-        return None
-
-def extract_with_adaptive_detection(opencv_image):
-    """
-    Method 3: Adaptive clothing detection using multiple techniques
-    """
-    try:
-        height, width = opencv_image.shape[:2]
-        
-        # Convert to different color spaces
-        gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
-        hsv = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2HSV)
-        
-        # Apply adaptive thresholding
-        adaptive_thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                              cv2.THRESH_BINARY, 11, 2)
-        
-        # Edge detection with multiple scales
-        edges1 = cv2.Canny(gray, 30, 100)
-        edges2 = cv2.Canny(gray, 50, 150)
-        edges_combined = cv2.bitwise_or(edges1, edges2)
-        
-        # Dilate edges to connect clothing regions
-        kernel = np.ones((3, 3), np.uint8)
-        edges_dilated = cv2.dilate(edges_combined, kernel, iterations=2)
-        
-        # Find contours
-        contours, _ = cv2.findContours(edges_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # Filter contours by area, aspect ratio, and position
-            valid_contours = []
-            min_area = (width * height) * 0.02  # At least 2% of image
-            
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area > min_area:
-                    x, y, w, h = cv2.boundingRect(contour)
-                    aspect_ratio = w / h
-                    
-                    # More flexible criteria for different clothing types
-                    # Shirts/tops: wider, upper portion
-                    # Pants/jeans: taller, lower portion  
-                    # Dresses: tall, full body
-                    center_x = x + w/2
-                    center_y = y + h/2
-                    
-                    # Check if contour is in reasonable position and size
-                    if (0.3 < aspect_ratio < 3.0 and 
-                        center_x > width*0.2 and center_x < width*0.8 and
-                        center_y > height*0.1 and center_y < height*0.9):
-                        valid_contours.append(contour)
-            
-            if valid_contours:
-                # Get the largest valid contour
-                largest_contour = max(valid_contours, key=cv2.contourArea)
-                x, y, w, h = cv2.boundingRect(largest_contour)
-                
-                # Add padding
-                padding = 20
-                x = max(0, x - padding)
-                y = max(0, y - padding)
-                w = min(width - x, w + 2*padding)
-                h = min(height - y, h + 2*padding)
-                
-                # Create mask for the clothing region
-                mask = np.zeros(gray.shape, dtype=np.uint8)
-                cv2.fillPoly(mask, [largest_contour], 255)
-                
-                # Apply mask to original image
-                result = opencv_image.copy()
-                result[mask == 0] = [255, 255, 255]
-                
-                cropped_clothing = result[y:y+h, x:x+w]
-                return cropped_clothing
-                
-    except Exception as e:
-        print(f"Adaptive detection method failed: {e}")
-        return None
 
 
 
